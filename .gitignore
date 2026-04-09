@@ -1,3 +1,4 @@
 .vscode
 build/
 .mxproject
+.DS_Store
