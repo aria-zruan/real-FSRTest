@@ -56,7 +56,8 @@
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-static uint16_t ADC_ReadPA0(void);
+static uint16_t ADC_ReadChannel(uint32_t channel);
+static uint32_t ADC_RawToPercentX10(uint16_t raw_value);
 
 /* USER CODE END PFP */
 
@@ -98,7 +99,7 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)"stm32 adc pa0 start\r\n", 20U, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)"stm32 adc pa0-pa4 start\r\n", 24U, HAL_MAX_DELAY);
 
   /* USER CODE END 2 */
 
@@ -109,17 +110,30 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    uint16_t adc_raw = ADC_ReadPA0();
-    uint32_t millivolts = ((uint32_t)adc_raw * 3300U) / 4095U;
-    uint32_t percent_x10 = ((uint32_t)adc_raw * 1000U) / 4095U;
+    uint16_t adc_pa0 = ADC_ReadChannel(ADC_CHANNEL_0);
+    uint16_t adc_pa1 = ADC_ReadChannel(ADC_CHANNEL_1);
+    uint16_t adc_pa2 = ADC_ReadChannel(ADC_CHANNEL_2);
+    uint16_t adc_pa3 = ADC_ReadChannel(ADC_CHANNEL_3);
+    uint16_t adc_pa4 = ADC_ReadChannel(ADC_CHANNEL_4);
+    uint32_t pa0_percent_x10 = ADC_RawToPercentX10(adc_pa0);
+    uint32_t pa1_percent_x10 = ADC_RawToPercentX10(adc_pa1);
+    uint32_t pa2_percent_x10 = ADC_RawToPercentX10(adc_pa2);
+    uint32_t pa3_percent_x10 = ADC_RawToPercentX10(adc_pa3);
+    uint32_t pa4_percent_x10 = ADC_RawToPercentX10(adc_pa4);
 
-    char msg[64];
+    char msg[128];
     int len = snprintf(msg, sizeof(msg),
-                       "PA0 ADC=%u, V=%lu mV, P=%lu.%lu%%\r\n",
-                       (unsigned int)adc_raw,
-                       (unsigned long)millivolts,
-                       (unsigned long)(percent_x10 / 10U),
-                       (unsigned long)(percent_x10 % 10U));
+               "PA0=%lu.%lu%% PA1=%lu.%lu%% PA2=%lu.%lu%% PA3=%lu.%lu%% PA4=%lu.%lu%%\r\n",
+               (unsigned long)(pa0_percent_x10 / 10U),
+               (unsigned long)(pa0_percent_x10 % 10U),
+               (unsigned long)(pa1_percent_x10 / 10U),
+               (unsigned long)(pa1_percent_x10 % 10U),
+               (unsigned long)(pa2_percent_x10 / 10U),
+               (unsigned long)(pa2_percent_x10 % 10U),
+               (unsigned long)(pa3_percent_x10 / 10U),
+               (unsigned long)(pa3_percent_x10 % 10U),
+               (unsigned long)(pa4_percent_x10 / 10U),
+               (unsigned long)(pa4_percent_x10 % 10U));
     if (len > 0)
     {
       HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)len, HAL_MAX_DELAY);
@@ -176,11 +190,13 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-static uint16_t ADC_ReadPA0(void)
+static uint16_t ADC_ReadChannel(uint32_t channel)
 {
   ADC_ChannelConfTypeDef sConfig = {0};
 
-  sConfig.Channel = ADC_CHANNEL_0;
+  hadc.Instance->CHSELR = 0U;
+
+  sConfig.Channel = channel;
   sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
   sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
   if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
@@ -202,6 +218,11 @@ static uint16_t ADC_ReadPA0(void)
   uint16_t value = (uint16_t)HAL_ADC_GetValue(&hadc);
   (void)HAL_ADC_Stop(&hadc);
   return value;
+}
+
+static uint32_t ADC_RawToPercentX10(uint16_t raw_value)
+{
+  return ((uint32_t)raw_value * 1000U) / 4095U;
 }
 
 /* USER CODE END 4 */
