@@ -56,7 +56,7 @@
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
-static int32_t UART_ReadNumber(const char *prompt);
+static uint16_t ADC_ReadPA0(void);
 
 /* USER CODE END PFP */
 
@@ -98,7 +98,7 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)"stm32 poc start\r\n", 17U, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)"stm32 adc pa0 start\r\n", 20U, HAL_MAX_DELAY);
 
   /* USER CODE END 2 */
 
@@ -109,17 +109,23 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    int32_t a = UART_ReadNumber("Enter first number: ");
-    int32_t b = UART_ReadNumber("Enter second number: ");
-    int32_t result = a + b;
+    uint16_t adc_raw = ADC_ReadPA0();
+    uint32_t millivolts = ((uint32_t)adc_raw * 3300U) / 4095U;
+    uint32_t percent_x10 = ((uint32_t)adc_raw * 1000U) / 4095U;
 
     char msg[64];
-    int len = snprintf(msg, sizeof(msg), "Result: %ld + %ld = %ld\r\n\r\n",
-                       (long)a, (long)b, (long)result);
+    int len = snprintf(msg, sizeof(msg),
+                       "PA0 ADC=%u, V=%lu mV, P=%lu.%lu%%\r\n",
+                       (unsigned int)adc_raw,
+                       (unsigned long)millivolts,
+                       (unsigned long)(percent_x10 / 10U),
+                       (unsigned long)(percent_x10 % 10U));
     if (len > 0)
     {
       HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)len, HAL_MAX_DELAY);
     }
+
+    HAL_Delay(200);
   }
   /* USER CODE END 3 */
 }
@@ -170,42 +176,32 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
-/* Read a line from UART, echo characters back, parse and return as int32_t */
-static int32_t UART_ReadNumber(const char *prompt)
+static uint16_t ADC_ReadPA0(void)
 {
-  char buf[32];
-  uint16_t idx = 0;
-  uint8_t ch;
+  ADC_ChannelConfTypeDef sConfig = {0};
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)prompt, (uint16_t)strlen(prompt), HAL_MAX_DELAY);
-
-  while (1)
+  sConfig.Channel = ADC_CHANNEL_0;
+  sConfig.Rank = ADC_RANK_CHANNEL_NUMBER;
+  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  if (HAL_ADC_ConfigChannel(&hadc, &sConfig) != HAL_OK)
   {
-    if (HAL_UART_Receive(&huart1, &ch, 1U, HAL_MAX_DELAY) != HAL_OK)
-    {
-      continue;
-    }
-
-    if (ch == '\r' || ch == '\n')
-    {
-      HAL_UART_Transmit(&huart1, (uint8_t *)"\r\n", 2U, HAL_MAX_DELAY);
-      buf[idx] = '\0';
-      break;
-    }
-    else if ((ch == 0x7Fu || ch == '\b') && idx > 0U)
-    {
-      idx--;
-      HAL_UART_Transmit(&huart1, (uint8_t *)"\b \b", 3U, HAL_MAX_DELAY);
-    }
-    else if (idx < (uint16_t)(sizeof(buf) - 1U) &&
-             ((ch >= '0' && ch <= '9') || (ch == '-' && idx == 0U)))
-    {
-      buf[idx++] = (char)ch;
-      HAL_UART_Transmit(&huart1, &ch, 1U, HAL_MAX_DELAY);
-    }
+    return 0U;
   }
 
-  return (int32_t)atoi(buf);
+  if (HAL_ADC_Start(&hadc) != HAL_OK)
+  {
+    return 0U;
+  }
+
+  if (HAL_ADC_PollForConversion(&hadc, HAL_MAX_DELAY) != HAL_OK)
+  {
+    (void)HAL_ADC_Stop(&hadc);
+    return 0U;
+  }
+
+  uint16_t value = (uint16_t)HAL_ADC_GetValue(&hadc);
+  (void)HAL_ADC_Stop(&hadc);
+  return value;
 }
 
 /* USER CODE END 4 */
