@@ -2,3 +2,7 @@
 build/
 .mxproject
 .DS_Store
+__pycache__
+.venv
+.vscode
+*.csv

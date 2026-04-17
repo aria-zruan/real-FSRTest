@@ -25,9 +25,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -38,6 +37,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define UART_FRAME_HEADER_0 0x55U
+#define UART_FRAME_HEADER_1 0xAAU
+#define UART_FRAME_CMD_ADC_RAW 0x00U
+#define UART_FRAME_DATA_LEN 2U
+#define UART_FRAME_TIMESTAMP_LEN 4U
+#define UART_FRAME_PAYLOAD_LEN (1U + UART_FRAME_DATA_LEN + UART_FRAME_TIMESTAMP_LEN)
+#define UART_FRAME_TOTAL_LEN (2U + 1U + 1U + UART_FRAME_PAYLOAD_LEN + 2U)
 
 /* USER CODE END PD */
 
@@ -57,7 +64,11 @@ void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 
 static uint16_t ADC_ReadChannel(uint32_t channel);
-static uint32_t ADC_RawToPercentX10(uint16_t raw_value);
+static void UART_SendAdcReading(uint8_t address, uint16_t raw_value, uint32_t timestamp_ms);
+static void UART_WriteUint16LE(uint8_t *buffer, uint16_t value);
+static void UART_WriteUint32LE(uint8_t *buffer, uint32_t value);
+static uint16_t UART_CalculateCustomCrc(const uint8_t *buffer, uint8_t length);
+static void UART_SendFrameAsHex(const uint8_t *frame, uint8_t frame_length);
 
 /* USER CODE END PFP */
 
@@ -99,7 +110,7 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_UART_Transmit(&huart1, (uint8_t *)"stm32 adc pa0-pa4 start\r\n", 24U, HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)"adc frame hex\r\n", 15U, HAL_MAX_DELAY);
 
   /* USER CODE END 2 */
 
@@ -110,34 +121,16 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    uint16_t adc_pa0 = ADC_ReadChannel(ADC_CHANNEL_0);
     uint16_t adc_pa1 = ADC_ReadChannel(ADC_CHANNEL_1);
     uint16_t adc_pa2 = ADC_ReadChannel(ADC_CHANNEL_2);
     uint16_t adc_pa3 = ADC_ReadChannel(ADC_CHANNEL_3);
     uint16_t adc_pa4 = ADC_ReadChannel(ADC_CHANNEL_4);
-    uint32_t pa0_percent_x10 = ADC_RawToPercentX10(adc_pa0);
-    uint32_t pa1_percent_x10 = ADC_RawToPercentX10(adc_pa1);
-    uint32_t pa2_percent_x10 = ADC_RawToPercentX10(adc_pa2);
-    uint32_t pa3_percent_x10 = ADC_RawToPercentX10(adc_pa3);
-    uint32_t pa4_percent_x10 = ADC_RawToPercentX10(adc_pa4);
+    uint32_t timestamp_ms = HAL_GetTick();
 
-    char msg[128];
-    int len = snprintf(msg, sizeof(msg),
-               "PA0=%lu.%lu%% PA1=%lu.%lu%% PA2=%lu.%lu%% PA3=%lu.%lu%% PA4=%lu.%lu%%\r\n",
-               (unsigned long)(pa0_percent_x10 / 10U),
-               (unsigned long)(pa0_percent_x10 % 10U),
-               (unsigned long)(pa1_percent_x10 / 10U),
-               (unsigned long)(pa1_percent_x10 % 10U),
-               (unsigned long)(pa2_percent_x10 / 10U),
-               (unsigned long)(pa2_percent_x10 % 10U),
-               (unsigned long)(pa3_percent_x10 / 10U),
-               (unsigned long)(pa3_percent_x10 % 10U),
-               (unsigned long)(pa4_percent_x10 / 10U),
-               (unsigned long)(pa4_percent_x10 % 10U));
-    if (len > 0)
-    {
-      HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)len, HAL_MAX_DELAY);
-    }
+    UART_SendAdcReading(0x01U, adc_pa1, timestamp_ms);
+    UART_SendAdcReading(0x02U, adc_pa2, timestamp_ms);
+    UART_SendAdcReading(0x03U, adc_pa3, timestamp_ms);
+    UART_SendAdcReading(0x04U, adc_pa4, timestamp_ms);
 
     HAL_Delay(200);
   }
@@ -220,9 +213,70 @@ static uint16_t ADC_ReadChannel(uint32_t channel)
   return value;
 }
 
-static uint32_t ADC_RawToPercentX10(uint16_t raw_value)
+static void UART_SendAdcReading(uint8_t address, uint16_t raw_value, uint32_t timestamp_ms)
 {
-  return ((uint32_t)raw_value * 1000U) / 4095U;
+  uint8_t frame[UART_FRAME_TOTAL_LEN];
+  uint16_t crc;
+
+  frame[0] = UART_FRAME_HEADER_0;
+  frame[1] = UART_FRAME_HEADER_1;
+  frame[2] = address;
+  frame[3] = UART_FRAME_PAYLOAD_LEN;
+  frame[4] = UART_FRAME_CMD_ADC_RAW;
+  UART_WriteUint16LE(&frame[5], raw_value);
+  UART_WriteUint32LE(&frame[7], timestamp_ms);
+
+  crc = UART_CalculateCustomCrc(frame, (uint8_t)(UART_FRAME_TOTAL_LEN - 2U));
+  UART_WriteUint16LE(&frame[11], crc);
+
+  UART_SendFrameAsHex(frame, UART_FRAME_TOTAL_LEN);
+}
+
+static void UART_WriteUint16LE(uint8_t *buffer, uint16_t value)
+{
+  buffer[0] = (uint8_t)(value & 0xFFU);
+  buffer[1] = (uint8_t)((value >> 8) & 0xFFU);
+}
+
+static void UART_WriteUint32LE(uint8_t *buffer, uint32_t value)
+{
+  buffer[0] = (uint8_t)(value & 0xFFU);
+  buffer[1] = (uint8_t)((value >> 8) & 0xFFU);
+  buffer[2] = (uint8_t)((value >> 16) & 0xFFU);
+  buffer[3] = (uint8_t)((value >> 24) & 0xFFU);
+}
+
+static uint16_t UART_CalculateCustomCrc(const uint8_t *buffer, uint8_t length)
+{
+  uint16_t crc = 0xA5A5U;
+  uint8_t index;
+
+  for (index = 0U; index < length; ++index)
+  {
+    crc = (uint16_t)(crc + buffer[index]);
+    crc = (uint16_t)((crc << 1) | (crc >> 15));
+    crc ^= (uint16_t)(0x1021U + index);
+  }
+
+  return crc;
+}
+
+static void UART_SendFrameAsHex(const uint8_t *frame, uint8_t frame_length)
+{
+  static const char hex_digits[] = "0123456789ABCDEF";
+  char msg[(UART_FRAME_TOTAL_LEN * 3U) + 2U];
+  uint8_t frame_index;
+  uint8_t msg_index = 0U;
+
+  for (frame_index = 0U; frame_index < frame_length; ++frame_index)
+  {
+    msg[msg_index++] = hex_digits[(frame[frame_index] >> 4) & 0x0FU];
+    msg[msg_index++] = hex_digits[frame[frame_index] & 0x0FU];
+    msg[msg_index++] = (frame_index == (uint8_t)(frame_length - 1U)) ? '\r' : ' ';
+  }
+
+  msg[msg_index++] = '\n';
+  HAL_UART_Transmit(&huart1, (uint8_t *)msg, msg_index, HAL_MAX_DELAY);
 }
 
 /* USER CODE END 4 */
